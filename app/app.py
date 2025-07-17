@@ -51,9 +51,27 @@ INSTAGRAM_SCRAPER_ACTOR_ID = "apify/instagram-hashtag-scraper"
 
 def build_vectorstore_from_posts(posts: list) -> FAISS:
     """
-    게시글 리스트에서 'cleaned_caption'을 사용하여 FAISS 벡터 스토어를 구축합니다.
+    릴스 리스트에서 'cleaned_caption'을 사용하여 FAISS 벡터 스토어를 구축합니다.
     """
-    docs = [Document(page_content=p["cleaned_caption"]) for p in posts if "cleaned_caption" in p]
+  # 'cleaned_caption'이 유효한 문자열이고 비어있지 않은 경우에만 Document로 만듭니다.
+    docs = [
+        Document(page_content=p["cleaned_caption"]) 
+        for p in posts 
+        if "cleaned_caption" in p and p["cleaned_caption"] and isinstance(p["cleaned_caption"], str)
+    ]
+
+    if not docs:
+        st.warning("⚠️ 벡터 스토어를 구축할 유효한 텍스트가 없습니다. 수집된 릴스의 캡션이 비어있거나 유효하지 않을 수 있습니다.")
+        # 빈 벡터스토어를 반환하거나, 오류를 발생시킬 수 있습니다.
+        # 여기서는 빈 벡터스토어를 반환하여 앱이 계속 실행되도록 합니다.
+        # UpstageEmbeddings를 호출할 필요가 없으므로 오류를 피할 수 있습니다.
+        # 임베딩 모델이 필요하지 않은 FAISS 인스턴스를 생성하거나,
+        # 아니면 UpstageEmbeddings를 호출하기 전에 docs가 비어있지 않은지 확인해야 합니다.
+        # 여기서는 FAISS.from_documents가 빈 리스트를 받으면 어떻게 동작하는지 확인해야 합니다. check!!
+        # 일반적으로 빈 리스트로 벡터스토어를 만들면 이후 검색 시 문제가 될 수 있습니다. check!!
+        # 따라서 여기서는 빈 FAISS 인스턴스를 반환하는 대신, None을 반환하고 호출하는 곳에서 처리하도록 합니다.
+        return None # 또는 적절한 빈 FAISS 인스턴스 반환 로직 추가
+
     # UpstageEmbeddings 초기화 시 'model' 파라미터 추가
     embeddings = UpstageEmbeddings(model="embedding-query") # 또는 "embedding-passage" 등
     return FAISS.from_documents(docs, embeddings)
@@ -74,13 +92,13 @@ def solar_rag_answer_multi(question: str, history: list, vectorstore: FAISS, k: 
     chat_history = "\n".join([f"사용자: {q}\nAI: {a}" for q, a in history])
 
     prompt = ChatPromptTemplate.from_template("""
-다음은 인스타그램에서 수집한 게시글 내용입니다. 이전 대화와 게시글을 참고하여 사용자 질문에 성실하게 응답해주세요.
-게시글 내용과 직접적인 관련이 없거나, 답변하기 어려운 질문에는 "죄송합니다. 현재 게시글 내용으로는 답변하기 어렵습니다."라고 답변해주세요.
+다음은 인스타그램에서 수집한 릴스 내용입니다. 이전 대화와 릴스을 참고하여 사용자 질문에 성실하게 응답해주세요.
+릴스 내용과 직접적인 관련이 없거나, 답변하기 어려운 질문에는 "죄송합니다. 현재 릴스 내용으로는 답변하기 어렵습니다."라고 답변해주세요.
 
 [이전 대화]
 {chat_history}
 
-[게시글 내용]
+[릴스 내용]
 {context}
 
 [현재 질문]
@@ -130,7 +148,7 @@ def fetch_posts_from_apify(
         "extendOutputFunctionVars": {},
     }
 
-    st.info(f"🚀 Apify 인스타그램 해시태그 스크래퍼 실행 중... 해시태그: #{hashtag}, 최대 {max_count}개 게시글")
+    st.info(f"🚀 Apify 인스타그램 해시태그 스크래퍼 실행 중... 해시태그: #{hashtag}, 최대 {max_count}개 릴스")
     st.info(f"Apify 콘솔에서 진행 상황을 확인할 수 있습니다: https://console.apify.com/actors/{actor_id}")
 
     try:
@@ -163,7 +181,7 @@ def fetch_posts_from_apify(
                     "comments": item.get("commentsCount", 0),
                     "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 })
-        st.success(f"✅ Apify에서 {len(apify_posts)}개 게시글 수집 완료.")
+        st.success(f"✅ Apify에서 {len(apify_posts)}개 릴스 수집 완료.")
         return apify_posts
 
     except Exception as e:
@@ -184,10 +202,10 @@ def _save_posts_to_json(posts: List[Dict], save_path: str) -> None:
 
 def filter_recent_posts(posts: List[Dict], days: int = 1) -> List[Dict]:
     """
-    게시글 리스트에서 최근 N일 이내의 게시물만 필터링합니다.
-    :param posts: 게시글 리스트 (각 게시물에 'date' 필드 필요, YYYY-MM-DD 형식)
+    릴스 리스트에서 최근 N일 이내의 게시물만 필터링합니다.
+    :param posts: 릴스 리스트 (각 게시물에 'date' 필드 필요, YYYY-MM-DD 형식)
     :param days: 최근 N일 (기본값 1일)
-    :return: 필터링된 게시글 리스트
+    :return: 필터링된 릴스 리스트
     """
     recent_posts = []
     time_threshold = datetime.now() - timedelta(days=days)
@@ -207,12 +225,12 @@ def filter_recent_posts(posts: List[Dict], days: int = 1) -> List[Dict]:
 
 def run_pipeline(hashtag: str, max_posts: int):
     """
-    인스타그램 게시글 수집부터 키워드 추출까지의 전체 파이프라인을 실행합니다.
+    인스타그램 릴스 수집부터 키워드 추출까지의 전체 파이프라인을 실행합니다.
     """
     progress_text = st.empty()
     progress_bar = st.progress(0)
 
-    progress_text.text(f"📥 인스타그램 게시글 수집 중... (Apify Actor 실행)")
+    progress_text.text(f"📥 인스타그램 릴스 수집 중... (Apify Actor 실행)")
     
     try:
         posts = fetch_posts_from_apify(hashtag, max_posts, APIFY_API_TOKEN)
@@ -221,24 +239,24 @@ def run_pipeline(hashtag: str, max_posts: int):
         initial_collected_count = len(posts)
         posts = filter_recent_posts(posts, days=1) 
         if initial_collected_count > 0: # 초기 수집 게시물이 있을 경우에만 메시지 표시
-            st.info(f"⏳ 최근 1일 이내 게시글 {len(posts)}개 필터링 완료 (총 {initial_collected_count}개 중).")
+            st.info(f"⏳ 최근 1일 이내 릴스 {len(posts)}개 필터링 완료 (총 {initial_collected_count}개 중).")
 
         save_path = os.path.join(DATA_DIR, f"instagram_{hashtag}_raw.json")
         _save_posts_to_json(posts, save_path) # <-- 여기서 json.dump를 호출합니다.
 
         progress_bar.progress(100)
-        progress_text.text(f"✅ 게시글 {len(posts)}개 수집 완료")
-        st.success(f"✅ 게시글 {len(posts)}개 수집 완료")
+        progress_text.text(f"✅ 릴스 {len(posts)}개 수집 완료")
+        st.success(f"✅ 릴스 {len(posts)}개 수집 완료")
 
     except Exception as e:
-        st.error(f"❌ 게시글 수집 중 오류 발생: {e}")
+        st.error(f"❌ 릴스 수집 중 오류 발생: {e}")
         st.warning("Apify 스크래핑 중 문제가 발생했습니다. Apify 콘솔에서 Actor 실행 로그를 확인해주세요.")
         progress_text.empty()
         progress_bar.empty()
         return []
 
     if not posts:
-        st.warning("수집된 게시글이 없습니다. 해시태그나 수집 설정을 확인해주세요.")
+        st.warning("수집된 릴스이 없습니다. 해시태그나 수집 설정을 확인해주세요.")
         return []
 
     st.info("🧹 텍스트 정제 중...")
@@ -263,7 +281,7 @@ def run_pipeline(hashtag: str, max_posts: int):
 
 def get_hashtag_frequency(posts: List[Dict], top_n: int = 10) -> List[tuple]:
     """
-    수집된 게시글 내에서 가장 많이 언급된 해시태그를 추출하고 빈도를 계산합니다.
+    수집된 릴스 내에서 가장 많이 언급된 해시태그를 추출하고 빈도를 계산합니다.
     (주의: 현재는 캡션에서 #으로 시작하는 단어를 간단히 파싱합니다.
     src/cleaner.py에서 캡션 정제 시 더 정교하게 해시태그를 추출하여
     post['hashtags_in_caption'] 필드에 저장하는 것을 권장합니다.)
@@ -312,7 +330,7 @@ def main():
         else:
             hashtag_to_analyze = hashtag
 
-        max_posts = st.slider("수집할 게시글 수", min_value=20, max_value=500, value=50, step=1)
+        max_posts = st.slider("수집할 릴스 수", min_value=20, max_value=500, value=50, step=1)
 
         if st.button("분석 시작"):
             if hashtag_to_analyze:
@@ -322,8 +340,14 @@ def main():
                     st.session_state["analyzed_posts"] = posts
                     
                     with st.spinner("📚 벡터 스토어 구축 중..."):
-                        st.session_state["vectorstore"] = build_vectorstore_from_posts(posts)
-                    st.success("✅ 벡터 스토어 구축 완료!")
+                        # build_vectorstore_from_posts 함수가 None을 반환할 수 있으므로 이를 확인합니다.
+                        vectorstore_result = build_vectorstore_from_posts(posts)
+                        if vectorstore_result:
+                            st.session_state["vectorstore"] = vectorstore_result
+                            st.success("✅ 벡터 스토어 구축 완료!")
+                        else:
+                            st.warning("⚠️ 벡터 스토어를 구축할 유효한 텍스트가 없어 RAG 기능을 사용할 수 없습니다.")
+                            st.session_state["vectorstore"] = None # 벡터스토어 없음으로 설정
 
                     st.subheader("📈 감정 분석 결과")
                     plot_sentiment_distribution(posts)
@@ -334,7 +358,7 @@ def main():
                     st.subheader("🔗 관련 해시태그 제안")
                     top_hashtags = get_hashtag_frequency(posts, top_n=15)
                     if top_hashtags:
-                        st.write("수집된 게시글에서 가장 많이 언급된 해시태그들입니다:")
+                        st.write("수집된 릴스에서 가장 많이 언급된 해시태그들입니다:")
                         cols = st.columns(5)
                         for i, (tag, count) in enumerate(top_hashtags):
                             with cols[i % 5]:
@@ -342,7 +366,7 @@ def main():
                                     st.session_state.suggested_hashtag = tag
                                     st.experimental_rerun()
                     else:
-                        st.info("수집된 게시글 내에서 다른 해시태그를 찾을 수 없습니다.")
+                        st.info("수집된 릴스 내에서 다른 해시태그를 찾을 수 없습니다.")
 
                     st.subheader("🔥 최근 인기 게시물")
                     sorted_posts = sorted(posts, key=lambda x: x.get('likes', 0), reverse=True)
@@ -357,7 +381,7 @@ def main():
                         st.info("최근 1일 이내의 인기 게시물을 찾을 수 없습니다.")
 
                 else:
-                    st.warning("분석을 위한 게시글이 충분히 수집되지 않았습니다.")
+                    st.warning("분석을 위한 릴스이 충분히 수집되지 않았습니다.")
             else:
                 st.warning("해시태그를 입력해주세요.")
 
@@ -371,7 +395,7 @@ def main():
             search_term = st.text_input("검색할 키워드 입력:")
             if search_term:
                 results = search_by_keyword(posts, search_term)
-                st.write(f"'{search_term}' 키워드 포함 게시글: {len(results)}개")
+                st.write(f"'{search_term}' 키워드 포함 릴스: {len(results)}개")
                 for i, post in enumerate(results[:5], 1):
                     st.markdown(f"**{i}.** {post['cleaned_caption']}")
             elif search_term == "":
