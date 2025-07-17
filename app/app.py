@@ -41,11 +41,17 @@ APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 
 # 전역 설정 변수
 DATA_DIR = "../data"
-FONT_PATH = "c:/Windows/Fonts/malgun.ttf" # 폰트 경로 확인 필요
+
+# 폰트 경로 설정: 프로젝트 루트의 'fonts' 폴더 내 Noto Sans KR 폰트 파일 참조
+current_script_path = os.path.abspath(__file__)
+current_dir = os.path.dirname(current_script_path)
+project_root_dir = os.path.join(current_dir, "..") 
+
+FONT_FILENAME = "NotoSansKR-Regular.ttf" 
+FONT_PATH = os.path.join(project_root_dir, "fonts", FONT_FILENAME)
 
 # Apify Instagram Hashtag Scraper Actor ID
-# 이 ID를 사용하려는 Instagram Hashtag Scraper Actor의 정확한 ID로 교체해주세요.
-# 예: "apify/instagram-hashtag-scraper" 또는 "novi/tiktok-hashtag-api" (틱톡용이지만, 인스타 해시태그 스크래퍼도 유사한 이름일 수 있음)
+# 이 ID를 사용하려는 Instagram Hashtag Scraper Actor의 정확한 ID로 교체해야함..
 INSTAGRAM_SCRAPER_ACTOR_ID = "apify/instagram-hashtag-scraper" 
 
 
@@ -53,27 +59,17 @@ def build_vectorstore_from_posts(posts: list) -> FAISS:
     """
     릴스 리스트에서 'cleaned_caption'을 사용하여 FAISS 벡터 스토어를 구축합니다.
     """
-  # 'cleaned_caption'이 유효한 문자열이고 비어있지 않은 경우에만 Document로 만듭니다.
     docs = [
         Document(page_content=p["cleaned_caption"]) 
         for p in posts 
-        if "cleaned_caption" in p and p["cleaned_caption"] and isinstance(p["cleaned_caption"], str)
+        if "cleaned_caption" in p and p["cleaned_caption"] and isinstance(p["cleaned_caption"], str) and len(p["cleaned_caption"].strip()) > 0
     ]
 
     if not docs:
         st.warning("⚠️ 벡터 스토어를 구축할 유효한 텍스트가 없습니다. 수집된 릴스의 캡션이 비어있거나 유효하지 않을 수 있습니다.")
-        # 빈 벡터스토어를 반환하거나, 오류를 발생시킬 수 있습니다.
-        # 여기서는 빈 벡터스토어를 반환하여 앱이 계속 실행되도록 합니다.
-        # UpstageEmbeddings를 호출할 필요가 없으므로 오류를 피할 수 있습니다.
-        # 임베딩 모델이 필요하지 않은 FAISS 인스턴스를 생성하거나,
-        # 아니면 UpstageEmbeddings를 호출하기 전에 docs가 비어있지 않은지 확인해야 합니다.
-        # 여기서는 FAISS.from_documents가 빈 리스트를 받으면 어떻게 동작하는지 확인해야 합니다. check!!
-        # 일반적으로 빈 리스트로 벡터스토어를 만들면 이후 검색 시 문제가 될 수 있습니다. check!!
-        # 따라서 여기서는 빈 FAISS 인스턴스를 반환하는 대신, None을 반환하고 호출하는 곳에서 처리하도록 합니다.
-        return None # 또는 적절한 빈 FAISS 인스턴스 반환 로직 추가
+        return None 
 
-    # UpstageEmbeddings 초기화 시 'model' 파라미터 추가
-    embeddings = UpstageEmbeddings(model="embedding-query") # 또는 "embedding-passage" 등
+    embeddings = UpstageEmbeddings(model="embedding-passage") 
     return FAISS.from_documents(docs, embeddings)
 
 
@@ -84,6 +80,10 @@ def solar_rag_answer_multi(question: str, history: list, vectorstore: FAISS, k: 
     """
     if not api_key:
         return "오류: Upstage API 키가 설정되지 않았습니다. .env 파일을 확인해주세요."
+    
+    if vectorstore is None:
+        return "죄송합니다. 분석된 릴스 내용이 없어 답변하기 어렵습니다. 먼저 '해시태그 분석' 탭에서 분석을 실행해 주세요."
+
 
     retriever = vectorstore.as_retriever(search_kwargs={"k": k})
     context_docs = retriever.invoke(question)
@@ -92,7 +92,7 @@ def solar_rag_answer_multi(question: str, history: list, vectorstore: FAISS, k: 
     chat_history = "\n".join([f"사용자: {q}\nAI: {a}" for q, a in history])
 
     prompt = ChatPromptTemplate.from_template("""
-다음은 인스타그램에서 수집한 릴스 내용입니다. 이전 대화와 릴스을 참고하여 사용자 질문에 성실하게 응답해주세요.
+다음은 인스타그램에서 수집한 릴스 내용입니다. 이전 대화와 릴스를 참고하여 사용자 질문에 성실하게 응답해주세요.
 릴스 내용과 직접적인 관련이 없거나, 답변하기 어려운 질문에는 "죄송합니다. 현재 릴스 내용으로는 답변하기 어렵습니다."라고 답변해주세요.
 
 [이전 대화]
@@ -124,7 +124,7 @@ def fetch_posts_from_apify(
     apify_api_token: str
 ) -> List[Dict]:
     """
-    Apify Instagram Hashtag Scraper Actor를 사용하여 해시태그 게시물을 수집합니다.
+    Apify Instagram Hashtag Scraper Actor를 사용하여 해시태그 릴스를 수집합니다.
     """
     if not apify_api_token:
         st.error("❌ Apify API 토큰이 설정되지 않았습니다. .env 파일을 확인해주세요.")
@@ -136,9 +136,6 @@ def fetch_posts_from_apify(
     run_input = {
         "hashtags": [hashtag],
         "resultsLimit": max_count,
-        # Instagram Hashtag Scraper는 'resultsType' 파라미터를 지원하지 않을 수 있습니다.
-        # 만약 사용하시는 특정 Actor가 'posts' 또는 'reels' 구분을 지원한다면 여기에 추가해주세요.
-        # "resultsType": "posts", 
         "proxyConfiguration": { "use": "AUTO_POOL" },
         "extendOutputFunction": """
             async ({ data, item, page, request, customData, basicCrawler, Apify }) => {
@@ -159,18 +156,15 @@ def fetch_posts_from_apify(
 
         apify_posts = []
         for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-            # Apify Actor의 출력 데이터 구조에 따라 필드명을 조정합니다.
-            # 인스타그램 스크래퍼는 일반적으로 'caption', 'timestamp', 'likesCount', 'commentsCount', 'shortcode', 'url'을 사용합니다.
             caption = item.get("caption", "")
             
             date_str = item.get("timestamp")
             if date_str:
-                # ISO 8601 형식 (예: 2023-10-26T10:00:00.000Z)에서 날짜만 추출
                 date_only = date_str.split("T")[0] if "T" in date_str else date_str.split(" ")[0]
             else:
                 date_only = None
 
-            if caption:
+            if caption: # 캡션이 비어있지 않은 경우에만 추가
                 apify_posts.append({
                     "caption": caption,
                     "date": date_only,
@@ -191,7 +185,7 @@ def fetch_posts_from_apify(
 
 def _save_posts_to_json(posts: List[Dict], save_path: str) -> None:
     """JSON 파일 저장 (임시 함수, src/utils.py 등으로 분리 권장)"""
-    import json # <-- 이 줄을 추가하여 함수 내부에서 json 모듈을 명시적으로 임포트합니다.
+    import json 
     try:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         with open(save_path, "w", encoding="utf-8") as f:
@@ -202,8 +196,8 @@ def _save_posts_to_json(posts: List[Dict], save_path: str) -> None:
 
 def filter_recent_posts(posts: List[Dict], days: int = 1) -> List[Dict]:
     """
-    릴스 리스트에서 최근 N일 이내의 게시물만 필터링합니다.
-    :param posts: 릴스 리스트 (각 게시물에 'date' 필드 필요, YYYY-MM-DD 형식)
+    릴스 리스트에서 최근 N일 이내의 릴스만 필터링합니다.
+    :param posts: 릴스 리스트 (각 릴스에 'date' 필드 필요, YYYY-MM-DD 형식)
     :param days: 최근 N일 (기본값 1일)
     :return: 필터링된 릴스 리스트
     """
@@ -235,14 +229,14 @@ def run_pipeline(hashtag: str, max_posts: int):
     try:
         posts = fetch_posts_from_apify(hashtag, max_posts, APIFY_API_TOKEN)
         
-        # 최근 1일 이내 게시물 필터링
+        # 최근 1일 이내 릴스 필터링 (이 줄을 주석 처리하거나 삭제하여 필터링을 건너뛸 수 있습니다.)
         initial_collected_count = len(posts)
-        posts = filter_recent_posts(posts, days=1) 
-        if initial_collected_count > 0: # 초기 수집 게시물이 있을 경우에만 메시지 표시
+        # posts = filter_recent_posts(posts, days=1) # <-- 이 줄을 주석 처리하거나 삭제합니다.
+        if initial_collected_count > 0: # 초기 수집 릴스이 있을 경우에만 메시지 표시
             st.info(f"⏳ 최근 1일 이내 릴스 {len(posts)}개 필터링 완료 (총 {initial_collected_count}개 중).")
 
         save_path = os.path.join(DATA_DIR, f"instagram_{hashtag}_raw.json")
-        _save_posts_to_json(posts, save_path) # <-- 여기서 json.dump를 호출합니다.
+        _save_posts_to_json(posts, save_path) 
 
         progress_bar.progress(100)
         progress_text.text(f"✅ 릴스 {len(posts)}개 수집 완료")
@@ -272,8 +266,7 @@ def run_pipeline(hashtag: str, max_posts: int):
 
     output_path = os.path.join(DATA_DIR, f"instagram_{hashtag}_final.json")
     with open(output_path, "w", encoding="utf-8") as f:
-        # json.dump(posts, f, ensure_ascii=False, indent=2) # <-- 이 줄은 이미 외부에 import json이 있으므로 제거해도 됩니다.
-        import json # <-- 이 줄을 추가하여 함수 내부에서 json 모듈을 명시적으로 임포트합니다.
+        import json 
         json.dump(posts, f, ensure_ascii=False, indent=2)
 
     st.success("🎉 파이프라인 완료!")
@@ -340,20 +333,36 @@ def main():
                     st.session_state["analyzed_posts"] = posts
                     
                     with st.spinner("📚 벡터 스토어 구축 중..."):
-                        # build_vectorstore_from_posts 함수가 None을 반환할 수 있으므로 이를 확인합니다.
                         vectorstore_result = build_vectorstore_from_posts(posts)
                         if vectorstore_result:
                             st.session_state["vectorstore"] = vectorstore_result
                             st.success("✅ 벡터 스토어 구축 완료!")
                         else:
                             st.warning("⚠️ 벡터 스토어를 구축할 유효한 텍스트가 없어 RAG 기능을 사용할 수 없습니다.")
-                            st.session_state["vectorstore"] = None # 벡터스토어 없음으로 설정
+                            st.session_state["vectorstore"] = None 
 
                     st.subheader("📈 감정 분석 결과")
-                    plot_sentiment_distribution(posts)
+                    # charts.py에 font_path 전달
+                    plot_sentiment_distribution(posts, font_path=FONT_PATH)
 
                     st.subheader("☁️ 워드클라우드")
-                    generate_wordcloud(posts, font_path=FONT_PATH)
+                    
+                    # 폰트 파일 존재 여부 확인 및 경고 메시지 추가
+                    # st.info(f"워드클라우드 폰트 경로 확인 중: '{FONT_PATH}'") # 폰트 경로 출력
+                    st.info(f"워드클라우드 폰트 경로 확인 중") # 폰트 경로 출력 삭제
+                    if not os.path.exists(FONT_PATH):
+                        st.error(f"❌ 폰트 파일을 찾을 수 없습니다: '{FONT_PATH}'")
+                        st.warning("워드클라우드를 생성하려면 프로젝트 루트 폴더 아래 'fonts' 폴더에 'NotoSansKR-Regular.ttf' 파일을 넣어주세요. 파일명과 경로, 그리고 파일 읽기 권한을 확인해주세요.")
+                    else:
+                        try:
+                            generate_wordcloud(posts, font_path=FONT_PATH)
+                            st.success("✅ 워드클라우드 생성 완료!")
+                        except OSError as e:
+                            st.error(f"❌ 워드클라우드 폰트 로드 중 오류 발생: {e}")
+                            st.warning(f"폰트 파일 '{FONT_PATH}'에 접근할 수 없거나 파일이 손상되었을 수 있습니다. 파일의 읽기 권한을 확인하거나, 유효한 폰트 파일로 교체해주세요.")
+                        except Exception as e:
+                            st.error(f"❌ 워드클라우드 생성 중 예상치 못한 오류 발생: {e}")
+
 
                     st.subheader("🔗 관련 해시태그 제안")
                     top_hashtags = get_hashtag_frequency(posts, top_n=15)
@@ -368,17 +377,17 @@ def main():
                     else:
                         st.info("수집된 릴스 내에서 다른 해시태그를 찾을 수 없습니다.")
 
-                    st.subheader("🔥 최근 인기 게시물")
+                    st.subheader("🔥 최근 인기 릴스")
                     sorted_posts = sorted(posts, key=lambda x: x.get('likes', 0), reverse=True)
                     if sorted_posts:
-                        st.write("최근 1일 이내 수집된 게시물 중 좋아요가 많은 게시물입니다:")
+                        st.write("최근 1일 이내 수집된 릴스 중 좋아요가 많은 릴스입니다:")
                         for i, post in enumerate(sorted_posts[:5]):
                             st.markdown(f"**{i+1}.** **좋아요: {post.get('likes', 0)}**")
                             st.markdown(f"   **캡션:** {post.get('caption', '')[:150]}...")
-                            st.markdown(f"   [게시물 보기]({post.get('url', '#')})")
+                            st.markdown(f"   [릴스 보기]({post.get('url', '#')})")
                             st.markdown("---")
                     else:
-                        st.info("최근 1일 이내의 인기 게시물을 찾을 수 없습니다.")
+                        st.info("최근 1일 이내의 인기 릴스를 찾을 수 없습니다.")
 
                 else:
                     st.warning("분석을 위한 릴스이 충분히 수집되지 않았습니다.")
@@ -447,7 +456,6 @@ def main():
 
 if __name__ == "__main__":
     # --- 모듈 검색 경로 설정 시작 ---
-    # 이 부분은 Streamlit 앱이 src 및 visualization 모듈을 올바르게 찾도록 합니다.
     current_script_path = os.path.abspath(__file__)
     current_dir = os.path.dirname(current_script_path)
     project_root_dir = os.path.join(current_dir, "..")

@@ -16,3 +16,4 @@ matplotlib
 torch
 faiss-cpu
 apify-client # 추가
+seaborn # 추가
