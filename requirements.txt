@@ -7,7 +7,7 @@ langchain_chroma
 langchain_community
 transformers
 tqdm
-instaloader
+# instaloader # 제거
 emoji
 keybert
 sentence-transformers
@@ -15,3 +15,4 @@ wordcloud
 matplotlib
 torch
 faiss-cpu
+apify-client # 추가
