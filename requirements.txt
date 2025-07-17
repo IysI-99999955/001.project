@@ -1,6 +1,7 @@
 python-dotenv
 openai
 streamlit
+langchain
 langchain_upstage
 langchain_chroma
 langchain_community
@@ -13,3 +14,4 @@ sentence-transformers
 wordcloud
 matplotlib
 torch
+faiss-cpu
