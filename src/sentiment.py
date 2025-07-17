@@ -4,7 +4,7 @@ from transformers import pipeline
 from typing import List, Dict
 from tqdm import tqdm # tqdm 라이브러리 임포트
 
-def load_sentiment_model(model_name: str = "nlp04/korean-sentiment-classification"):
+def load_sentiment_model(model_name: str = "sangrimlee/bert-base-multilingual-cased-nsmc"):
     """
     감정 분석용 모델 로드
     :param model_name: Hugging Face 모델 이름
