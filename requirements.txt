@@ -1,0 +1,15 @@
+python-dotenv
+openai
+streamlit
+langchain_upstage
+langchain_chroma
+langchain_community
+transformers
+tqdm
+instaloader
+emoji
+keybert
+sentence-transformers
+wordcloud
+matplotlib
+torch
