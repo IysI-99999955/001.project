@@ -11,12 +11,11 @@ project_root_dir = os.path.join(current_dir, "..")
 sys.path.insert(0, project_root_dir)
 # --- 모듈 검색 경로 설정 끝 ---
 
-
-import streamlit as st
-import json
-from dotenv import load_dotenv
 from collections import Counter
 from typing import List, Dict
+
+import streamlit as st
+from dotenv import load_dotenv
 
 # src 및 visualization 모듈 임포트
 from src.cleaner import clean_captions
@@ -28,7 +27,7 @@ from visualization.wordcloud import generate_wordcloud
 
 # Langchain 및 Upstage 관련 모듈 임포트
 from langchain_upstage import ChatUpstage, UpstageEmbeddings
-from langchain_community.vectorstores import FAISS # Deprecation Warning에 따라 수정
+from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -42,18 +41,21 @@ APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 
 # 전역 설정 변수
 DATA_DIR = "../data"
-FONT_PATH = "c:/Windows/Fonts/malgun.ttf"
+FONT_PATH = "c:/Windows/Fonts/malgun.ttf" # 폰트 경로 확인 필요
 
-# Apify Instagram Scraper Actor ID (공식 Actor ID)
-INSTAGRAM_SCRAPER_ACTOR_ID = "apify/instagram-scraper"
+# Apify Instagram Hashtag Scraper Actor ID
+# 이 ID를 사용하려는 Instagram Hashtag Scraper Actor의 정확한 ID로 교체해주세요.
+# 예: "apify/instagram-hashtag-scraper" 또는 "novi/tiktok-hashtag-api" (틱톡용이지만, 인스타 해시태그 스크래퍼도 유사한 이름일 수 있음)
+INSTAGRAM_SCRAPER_ACTOR_ID = "apify/instagram-hashtag-scraper" 
 
 
 def build_vectorstore_from_posts(posts: list) -> FAISS:
     """
-    게시글 리스트에서 cleaned_caption을 사용하여 FAISS 벡터 스토어를 구축합니다.
+    게시글 리스트에서 'cleaned_caption'을 사용하여 FAISS 벡터 스토어를 구축합니다.
     """
     docs = [Document(page_content=p["cleaned_caption"]) for p in posts if "cleaned_caption" in p]
-    embeddings = UpstageEmbeddings()
+    # UpstageEmbeddings 초기화 시 'model' 파라미터 추가
+    embeddings = UpstageEmbeddings(model="embedding-query") # 또는 "embedding-passage" 등
     return FAISS.from_documents(docs, embeddings)
 
 
@@ -98,19 +100,27 @@ def solar_rag_answer_multi(question: str, history: list, vectorstore: FAISS, k: 
     return response.content
 
 
-def fetch_posts_from_apify(hashtag: str, max_count: int, apify_api_token: str) -> List[Dict]:
+def fetch_posts_from_apify(
+    hashtag: str,
+    max_count: int,
+    apify_api_token: str
+) -> List[Dict]:
     """
-    Apify Instagram Scraper Actor를 사용하여 해시태그 게시물을 수집합니다.
+    Apify Instagram Hashtag Scraper Actor를 사용하여 해시태그 게시물을 수집합니다.
     """
     if not apify_api_token:
         st.error("❌ Apify API 토큰이 설정되지 않았습니다. .env 파일을 확인해주세요.")
         return []
 
     client = ApifyClient(apify_api_token)
+    actor_id = INSTAGRAM_SCRAPER_ACTOR_ID # Instagram Hashtag Scraper Actor ID 사용
 
     run_input = {
         "hashtags": [hashtag],
         "resultsLimit": max_count,
+        # Instagram Hashtag Scraper는 'resultsType' 파라미터를 지원하지 않을 수 있습니다.
+        # 만약 사용하시는 특정 Actor가 'posts' 또는 'reels' 구분을 지원한다면 여기에 추가해주세요.
+        # "resultsType": "posts", 
         "proxyConfiguration": { "use": "AUTO_POOL" },
         "extendOutputFunction": """
             async ({ data, item, page, request, customData, basicCrawler, Apify }) => {
@@ -120,25 +130,35 @@ def fetch_posts_from_apify(hashtag: str, max_count: int, apify_api_token: str) -
         "extendOutputFunctionVars": {},
     }
 
-    st.info(f"🚀 Apify Instagram Scraper 실행 중... 해시태그: #{hashtag}, 최대 {max_count}개 게시글")
-    st.info("Apify 콘솔에서 진행 상황을 확인할 수 있습니다: https://console.apify.com/actors")
+    st.info(f"🚀 Apify 인스타그램 해시태그 스크래퍼 실행 중... 해시태그: #{hashtag}, 최대 {max_count}개 게시글")
+    st.info(f"Apify 콘솔에서 진행 상황을 확인할 수 있습니다: https://console.apify.com/actors/{actor_id}")
 
     try:
-        run = client.actor(INSTAGRAM_SCRAPER_ACTOR_ID).call(
+        run = client.actor(actor_id).call(
             run_input=run_input,
-            timeout_secs=300
+            timeout_secs=300 # 5분 타임아웃
         )
 
         apify_posts = []
         for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+            # Apify Actor의 출력 데이터 구조에 따라 필드명을 조정합니다.
+            # 인스타그램 스크래퍼는 일반적으로 'caption', 'timestamp', 'likesCount', 'commentsCount', 'shortcode', 'url'을 사용합니다.
             caption = item.get("caption", "")
+            
+            date_str = item.get("timestamp")
+            if date_str:
+                # ISO 8601 형식 (예: 2023-10-26T10:00:00.000Z)에서 날짜만 추출
+                date_only = date_str.split("T")[0] if "T" in date_str else date_str.split(" ")[0]
+            else:
+                date_only = None
+
             if caption:
                 apify_posts.append({
                     "caption": caption,
-                    "date": item.get("timestamp", "").split("T")[0] if item.get("timestamp") else None,
+                    "date": date_only,
                     "shortcode": item.get("shortcode"),
                     "url": item.get("url"),
-                    "hashtag": hashtag,
+                    "hashtag": hashtag, # 입력 해시태그 저장
                     "likes": item.get("likesCount", 0),
                     "comments": item.get("commentsCount", 0),
                     "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -153,6 +173,7 @@ def fetch_posts_from_apify(hashtag: str, max_count: int, apify_api_token: str) -
 
 def _save_posts_to_json(posts: List[Dict], save_path: str) -> None:
     """JSON 파일 저장 (임시 함수, src/utils.py 등으로 분리 권장)"""
+    import json # <-- 이 줄을 추가하여 함수 내부에서 json 모듈을 명시적으로 임포트합니다.
     try:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         with open(save_path, "w", encoding="utf-8") as f:
@@ -184,27 +205,26 @@ def filter_recent_posts(posts: List[Dict], days: int = 1) -> List[Dict]:
     return recent_posts
 
 
-def run_pipeline(hashtag, max_posts):
+def run_pipeline(hashtag: str, max_posts: int):
     """
     인스타그램 게시글 수집부터 키워드 추출까지의 전체 파이프라인을 실행합니다.
     """
     progress_text = st.empty()
     progress_bar = st.progress(0)
 
-    progress_text.text(f"📥 게시글 수집 중... (Apify Actor 실행)")
+    progress_text.text(f"📥 인스타그램 게시글 수집 중... (Apify Actor 실행)")
     
     try:
         posts = fetch_posts_from_apify(hashtag, max_posts, APIFY_API_TOKEN)
         
-        # --- 추가된 부분: 최근 1일 이내 게시물 필터링 ---
+        # 최근 1일 이내 게시물 필터링
         initial_collected_count = len(posts)
-        posts = filter_recent_posts(posts, days=1) # 최근 1일 이내 게시물만 필터링
+        posts = filter_recent_posts(posts, days=1) 
         if initial_collected_count > 0: # 초기 수집 게시물이 있을 경우에만 메시지 표시
             st.info(f"⏳ 최근 1일 이내 게시글 {len(posts)}개 필터링 완료 (총 {initial_collected_count}개 중).")
-        # --- 추가된 부분 끝 ---
 
-        save_path = os.path.join(DATA_DIR, f"{hashtag}_raw.json")
-        _save_posts_to_json(posts, save_path)
+        save_path = os.path.join(DATA_DIR, f"instagram_{hashtag}_raw.json")
+        _save_posts_to_json(posts, save_path) # <-- 여기서 json.dump를 호출합니다.
 
         progress_bar.progress(100)
         progress_text.text(f"✅ 게시글 {len(posts)}개 수집 완료")
@@ -232,11 +252,13 @@ def run_pipeline(hashtag, max_posts):
     keyword_model = load_keyword_model()
     posts = extract_keywords(posts, keyword_model)
 
-    output_path = os.path.join(DATA_DIR, f"{hashtag}_final.json")
+    output_path = os.path.join(DATA_DIR, f"instagram_{hashtag}_final.json")
     with open(output_path, "w", encoding="utf-8") as f:
+        # json.dump(posts, f, ensure_ascii=False, indent=2) # <-- 이 줄은 이미 외부에 import json이 있으므로 제거해도 됩니다.
+        import json # <-- 이 줄을 추가하여 함수 내부에서 json 모듈을 명시적으로 임포트합니다.
         json.dump(posts, f, ensure_ascii=False, indent=2)
 
-    st.success("🎉 전체 파이프라인 완료!")
+    st.success("🎉 파이프라인 완료!")
     return posts
 
 def get_hashtag_frequency(posts: List[Dict], top_n: int = 10) -> List[tuple]:
@@ -278,25 +300,23 @@ def main():
             del st.session_state.suggested_hashtag
 
         hashtag = st.text_input(
-            "분석할 해시태그를 입력하세요 (예: 여행, ootd). 입력하지 않으면 '일상'으로 자동 분석됩니다:", # 안내 문구 변경
+            "분석할 해시태그를 입력하세요 (예: 여행, ootd). 입력하지 않으면 '일상'으로 자동 분석됩니다:",
             value=initial_hashtag_value,
             key="main_hashtag_input"
         ).strip().replace("#", "")
         
-        # --- 추가된 부분: 해시태그 입력이 없을 경우 '일상'으로 자동 설정 ---
+        # 해시태그 입력이 없을 경우 '일상'으로 자동 설정
         if not hashtag:
             hashtag_to_analyze = "일상"
             st.info(f"해시태그가 입력되지 않아 기본 해시태그 '#{hashtag_to_analyze}'으로 분석을 시작합니다.")
         else:
             hashtag_to_analyze = hashtag
-        # --- 추가된 부분 끝 ---
 
         max_posts = st.slider("수집할 게시글 수", min_value=20, max_value=500, value=50, step=1)
 
         if st.button("분석 시작"):
-            # run_pipeline에 실제 분석할 해시태그 전달
-            if hashtag_to_analyze: # 자동 설정된 해시태그도 유효한지 확인
-                posts = run_pipeline(hashtag_to_analyze, max_posts) # 변경된 부분
+            if hashtag_to_analyze:
+                posts = run_pipeline(hashtag_to_analyze, max_posts)
                 
                 if posts:
                     st.session_state["analyzed_posts"] = posts
@@ -324,25 +344,22 @@ def main():
                     else:
                         st.info("수집된 게시글 내에서 다른 해시태그를 찾을 수 없습니다.")
 
-                    # --- 추가된 부분: 최근 인기 게시물 보여주기 ---
                     st.subheader("🔥 최근 인기 게시물")
-                    # 필터링된 posts를 기준으로 좋아요 수에 따라 정렬
                     sorted_posts = sorted(posts, key=lambda x: x.get('likes', 0), reverse=True)
                     if sorted_posts:
                         st.write("최근 1일 이내 수집된 게시물 중 좋아요가 많은 게시물입니다:")
-                        for i, post in enumerate(sorted_posts[:5]): # 상위 5개 게시물 표시
+                        for i, post in enumerate(sorted_posts[:5]):
                             st.markdown(f"**{i+1}.** **좋아요: {post.get('likes', 0)}**")
-                            st.markdown(f"   **캡션:** {post.get('caption', '')[:150]}...") # 캡션 일부만 표시
+                            st.markdown(f"   **캡션:** {post.get('caption', '')[:150]}...")
                             st.markdown(f"   [게시물 보기]({post.get('url', '#')})")
                             st.markdown("---")
                     else:
                         st.info("최근 1일 이내의 인기 게시물을 찾을 수 없습니다.")
-                    # --- 추가된 부분 끝 ---
 
                 else:
                     st.warning("분석을 위한 게시글이 충분히 수집되지 않았습니다.")
             else:
-                st.warning("해시태그를 입력해주세요.") # 이 경고는 이제 사용자가 명시적으로 기본 해시태그를 지웠을 때만 나타납니다.
+                st.warning("해시태그를 입력해주세요.")
 
 
     with tab2:
@@ -405,4 +422,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # --- 모듈 검색 경로 설정 시작 ---
+    # 이 부분은 Streamlit 앱이 src 및 visualization 모듈을 올바르게 찾도록 합니다.
+    current_script_path = os.path.abspath(__file__)
+    current_dir = os.path.dirname(current_script_path)
+    project_root_dir = os.path.join(current_dir, "..")
+    sys.path.insert(0, project_root_dir)
+    # --- 모듈 검색 경로 설정 끝 ---
     main()
