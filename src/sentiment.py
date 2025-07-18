@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class SentimentAnalyzer:
     """감정 분석을 위한 클래스"""
     
-    def __init__(self, model_name: str = "sangrimlee/bert-base-multilingual-cased-nsmc", batch_size: int = 8, force_cpu: bool = False):
+    def __init__(self, model_name: str = "alsgyu/sentiment-analysis-fine-tuned-model", batch_size: int = 8, force_cpu: bool = False):
         self.model_name = model_name
         self.batch_size = batch_size
         self.force_cpu = force_cpu  # CPU 강제 사용 옵션
@@ -282,7 +282,7 @@ class SentimentAnalyzer:
 # 전역 인스턴스 (싱글톤 패턴)
 _sentiment_analyzer = None
 
-def get_sentiment_analyzer(model_name: str = "sangrimlee/bert-base-multilingual-cased-nsmc", force_cpu: bool = False) -> SentimentAnalyzer:
+def get_sentiment_analyzer(model_name: str = "alsgyu/sentiment-analysis-fine-tuned-model", force_cpu: bool = False) -> SentimentAnalyzer:
     """
     감정 분석기 인스턴스를 반환합니다.
     싱글톤 패턴으로 구현되어 메모리 효율성을 높입니다.
@@ -326,8 +326,8 @@ if __name__ == "__main__":
 
 # 추천 모델 리스트 (성능 순서)
 RECOMMENDED_MODELS = [
-    "sangrimlee/bert-base-multilingual-cased-nsmc",  # NSMC 데이터셋 기반 (현재 사용)
+    "sangrimlee/bert-base-multilingual-cased-nsmc",  # NSMC 데이터셋 기반 (not good)
     "beomi/kcbert-base",                    # 한국어 댓글 데이터로 학습된 BERT(not good)
-    "alsgyu/sentiment-analysis-fine-tuned-model",  # 감정 분석 파인튜닝 모델
+    "alsgyu/sentiment-analysis-fine-tuned-model",  # 감정 분석 파인튜닝 모델 (현재 사용)
     "tabularisai/multilingual-sentiment-analysis",   # 다국어 감정 분석 모델
 ]
