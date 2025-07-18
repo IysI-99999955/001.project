@@ -331,9 +331,9 @@ def main():
     
     with col1:
         hashtag = st.text_input(
-            "분석할 해시태그 입력:",
+            "분석할 해시태그 입력!!!",
             value=st.session_state.current_hashtag,
-            placeholder="예: 여행, ootd (기본값: 일상)"
+            placeholder="예: 여행, ootd, 사랑 (기본값: 일상)"
         ).strip().replace("#", "")
         
     with col2:

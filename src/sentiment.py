@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 class SentimentAnalyzer:
     """감정 분석을 위한 클래스"""
     
-    def __init__(self, model_name: str = "beomi/kcbert-base-nsmc", batch_size: int = 16):
+    def __init__(self, model_name: str = "sangrimlee/bert-base-multilingual-cased-nsmc", batch_size: int = 8, force_cpu: bool = False):
         self.model_name = model_name
         self.batch_size = batch_size
+        self.force_cpu = force_cpu  # CPU 강제 사용 옵션
         self.pipeline = None
         self.tokenizer = None
         self.model = None
@@ -39,12 +40,53 @@ class SentimentAnalyzer:
         캐싱을 사용하여 중복 로드를 방지합니다.
         """
         try:
-            # GPU 사용 가능 여부 확인
-            device = 0 if torch.cuda.is_available() else -1
+            # GPU 사용 가능 여부 확인 (더 안전한 방식)
+            device = -1  # 기본적으로 CPU 사용
+            device_name = "CPU"
+            
+            # force_cpu 옵션이 True가 아닐 때만 GPU 시도
+            if not self.force_cpu:
+                try:
+                    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                        # GPU 메모리 체크
+                        gpu_memory = torch.cuda.get_device_properties(0).total_memory
+                        if gpu_memory > 1e9:  # 1GB 이상
+                            device = 0
+                            device_name = f"GPU (Memory: {gpu_memory/1e9:.1f}GB)"
+                            logger.info(f"GPU detected and will be used: {device_name}")
+                        else:
+                            logger.info("GPU memory insufficient, using CPU")
+                    else:
+                        logger.info("CUDA not available, using CPU")
+                except Exception as gpu_error:
+                    logger.warning(f"GPU 감지 중 오류 발생, CPU 사용: {gpu_error}")
+                    device = -1
+                    device_name = "CPU (GPU 오류로 인한 대체)"
+            else:
+                logger.info("Force CPU mode enabled")
             
             # 모델과 토크나이저 직접 로드 (더 나은 제어)
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+            logger.info(f"Loading tokenizer: {self.model_name}")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True
+            )
+            
+            logger.info(f"Loading model: {self.model_name}")
+            self.model = AutoModelForSequenceClassification.from_pretrained(
+                self.model_name,
+                trust_remote_code=True
+            )
+            
+            # GPU 사용 시 모델을 GPU로 이동
+            if device == 0:
+                try:
+                    self.model = self.model.cuda()
+                    logger.info("Model moved to GPU successfully")
+                except Exception as cuda_error:
+                    logger.warning(f"GPU로 모델 이동 실패, CPU 사용: {cuda_error}")
+                    device = -1
+                    device_name = "CPU (GPU 이동 실패)"
             
             # 파이프라인 생성
             self.pipeline = pipeline(
@@ -57,15 +99,40 @@ class SentimentAnalyzer:
                 max_length=512
             )
             
-            st.success(f"✅ 감정 분석 모델 '{self.model_name}' 로드 완료! (Device: {'GPU' if device == 0 else 'CPU'})")
-            logger.info(f"Model loaded successfully: {self.model_name}")
+            st.success(f"✅ 감정 분석 모델 '{self.model_name}' 로드 완료! (Device: {device_name})")
+            logger.info(f"Model loaded successfully: {self.model_name} on {device_name}")
             return True
             
         except Exception as e:
             error_msg = f"❌ 감정 분석 모델 로드 중 오류 발생: {e}"
             st.error(error_msg)
             logger.error(error_msg)
-            return False
+            
+            # CPU로 재시도
+            try:
+                logger.info("GPU 로드 실패, CPU로 재시도...")
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+                
+                self.pipeline = pipeline(
+                    "sentiment-analysis",
+                    model=self.model,
+                    tokenizer=self.tokenizer,
+                    device=-1,  # 강제로 CPU 사용
+                    return_all_scores=True,
+                    truncation=True,
+                    max_length=512
+                )
+                
+                st.warning("⚠️ GPU 로드 실패로 CPU 사용 중입니다.")
+                logger.info("Successfully loaded model on CPU as fallback")
+                return True
+                
+            except Exception as cpu_error:
+                error_msg = f"❌ CPU 로드도 실패: {cpu_error}"
+                st.error(error_msg)
+                logger.error(error_msg)
+                return False
     
     def preprocess_text(self, text: str) -> str:
         """
@@ -215,14 +282,14 @@ class SentimentAnalyzer:
 # 전역 인스턴스 (싱글톤 패턴)
 _sentiment_analyzer = None
 
-def get_sentiment_analyzer(model_name: str = "beomi/kcbert-base-nsmc") -> SentimentAnalyzer:
+def get_sentiment_analyzer(model_name: str = "sangrimlee/bert-base-multilingual-cased-nsmc", force_cpu: bool = False) -> SentimentAnalyzer:
     """
     감정 분석기 인스턴스를 반환합니다.
     싱글톤 패턴으로 구현되어 메모리 효율성을 높입니다.
     """
     global _sentiment_analyzer
     if _sentiment_analyzer is None or _sentiment_analyzer.model_name != model_name:
-        _sentiment_analyzer = SentimentAnalyzer(model_name)
+        _sentiment_analyzer = SentimentAnalyzer(model_name, force_cpu=force_cpu)
         if not _sentiment_analyzer.load_model():
             _sentiment_analyzer = None
     return _sentiment_analyzer
@@ -256,3 +323,11 @@ if __name__ == "__main__":
         results = analyzer.analyze_sentiment(test_posts)
         for result in results:
             print(f"감정: {result['sentiment']}, 점수: {result['score']:.3f}")
+
+# 추천 모델 리스트 (성능 순서)
+RECOMMENDED_MODELS = [
+    "sangrimlee/bert-base-multilingual-cased-nsmc",  # NSMC 데이터셋 기반 (현재 사용)
+    "beomi/kcbert-base",                    # 한국어 댓글 데이터로 학습된 BERT(not good)
+    "alsgyu/sentiment-analysis-fine-tuned-model",  # 감정 분석 파인튜닝 모델
+    "tabularisai/multilingual-sentiment-analysis",   # 다국어 감정 분석 모델
+]
